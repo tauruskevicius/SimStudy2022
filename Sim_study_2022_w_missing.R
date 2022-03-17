@@ -3,6 +3,61 @@ library(MatchIt)
 library(mice)
 #set.seed(1234)
 
+CCA_treatment_estimation <- function(res_row, res_col_name) {
+   # Remove rows with NAN
+   datCCA <- na.omit(dat)
+   # Do matching
+   m.out <- matchit(trt ~ X1+X2+X3, data = datCCA, method = 'nearest',
+                    ratio = 1) 
+   dataMatched <- match.data(m.out)
+   # Fit a model and store estimate treatment effect
+   lm1 <- lm(y ~ trt + X1+X2+X3, data = dataMatched)
+   resultsData[res_row, res_col_name] <<- summary(lm1)$coef[2,1]  
+}
+
+MI_treatment_estimation <- function(num_imputations, res_row, W_res_col_name, A_res_col_name) {
+   m = num_imputations
+   withinResults <- c()
+   acrossResults <- c()
+   propensityScores <- data.frame(matrix(ncol=0, nrow = n))
+   mids <- mice(dat[,3:5], m = m, method = 'norm')
+   
+   for(k in 1:m) {
+      # Access imputed dataset
+      dataImputed <- complete(mids, k)
+      # Append y and trt
+      dataImputed$trt = dat$trt
+      dataImputed$y = dat$y
+      # Do matching
+      m.out <- matchit(trt ~ X1+X2+X3, data = dataImputed, method = 'nearest',
+                       ratio = 1)
+      dataMatched <- match.data(m.out)
+      # Append propensity scores of each obs in a dataset
+      propensityScores <- cbind(propensityScores, data.frame(m.out$distance))
+      # Fit a model and store estimate treatment effect
+      lm0 <- lm(y ~ trt + X1+X2+X3, data = dataMatched)
+      withinResults[k] <- summary(lm0)$coef[2,1]
+   }
+   
+   # Assign avg propensity scores to m.out and match
+   avg_prop <- rowMeans(propensityScores)
+   for (z in 1:m) {
+      # Access imputed dataset
+      dataImputed <- complete(mids, z)
+      # Append y and trt
+      dataImputed$trt = dat$trt
+      dataImputed$y = dat$y
+      m.out <- matchit(trt ~ X1+X2+X3, data = dataImputed, method = 'nearest',
+                       ratio = 1)
+      m.out$distance <- avg_prop
+      dataMatched <- match.data(m.out)
+      lm1 <- lm(y ~ trt + X1+X2+X3, data = dataMatched)
+      acrossResults[z] <- summary(lm0)$coef[2,1]
+   }
+   resultsData[res_row, W_res_col_name] <<- mean(withinResults)  
+   resultsData[res_row, A_res_col_name] <<- mean(acrossResults)  
+}
+
 #0 is MCAR
 #1 is MAR1
 missingness_index <- 0
@@ -78,111 +133,11 @@ for (j in 1:10){
    dat <- data.frame(y, trt, X)
    
    #CCA
-   # Remove rows with NAN
-   datCCA <- na.omit(dat)
-   # Do matching
-   m.out <- matchit(trt ~ X1 + X2 + X3 + X4 + X5 , data = datCCA, method = 'nearest',
-                    ratio = 1) 
-   dataMatched <- match.data(m.out)
-   # Fit a model and store estimate treatment effect
-   lm1 <- lm(y ~ trt + X1 + X2 + X3 + X4 + X5 , data = dataMatched)
-   resultsData[j, 'CCA'] <- summary(lm1)$coef[2,1]                               
-   
-   # Multiple Imputation - 5 datasets 
-   m = 5
-   withinResults <- c()
-   propensityScores <- data.frame(matrix(ncol=0, nrow = n))
-   mids <- mice(dat[,3:7], m = m)
-   
-   for(k in 1:m) {
-      # Access imputed dataset
-      dataImputed <- complete(mids, k)
-      # Append y and trt
-      dataImputed$trt = dat$trt
-      dataImputed$y = dat$y
-      # Do matching
-      m.out <- matchit(trt ~ X1 + X2 + X3 + X4 + X5 , data = dataImputed, method = 'nearest',
-                       ratio = 1)
-      dataMatched <- match.data(m.out)
-      # Append propensity scores of each obs in a dataset
-      propensityScores <- cbind(propensityScores, data.frame(m.out$distance))
-      # Fit a model and store estimate treatment effect
-      lm0 <- lm(y ~ trt + X1 + X2 + X3 + X4 + X5, data = dataMatched)
-      withinResults[k] <- summary(lm0)$coef[2,1]
-   }
-   resultsData[j, 'W_MI5'] <- mean(withinResults)  
-   
-   # Assign avg propensity scores to m.out and match
-   avg_prop <- rowMeans(propensityScores)
-   m.out$distance <- avg_prop
-   dataMatched <- match.data(m.out)
-   # Fit a model and store estimate treatment effect
-   lm1 <- lm(y ~ trt + X1 + X2 + X3 + X4 + X5, data = dataMatched)
-   resultsData[j, 'A_MI5'] <- summary(lm1)$coefficients[2,1]
-   
-   # Multiple Imputation - 20 datasets
-   m = 20
-   withinResults <- c()
-   propensityScores <- data.frame(matrix(ncol=0, nrow = n))
-   mids <- mice(dat[,3:7], m = m)
-   
-   for(k in 1:m) {
-      # Impute
-      dataImputed <- complete(mids, k)
-      # Append y and trt
-      dataImputed$trt = dat$trt
-      dataImputed$y = dat$y
-      # Do matching
-      m.out <- matchit(trt ~ X1 + X2 + X3 + X4 + X5 , data = dataImputed, method = 'nearest',
-                       ratio = 1)
-      dataMatched <- match.data(m.out)
-      # Append propensity scores of each obs in a dataset
-      propensityScores <- cbind(propensityScores, data.frame(m.out$distance))
-      # Fit a model and store estimate treatment effect
-      lm0 <- lm(y ~ trt + X1 + X2 + X3 + X4 + X5, data = dataMatched)
-      withinResults[k] <- summary(lm0)$coef[2,1]
-   }
-   resultsData[j, 'W_MI20'] <- mean(withinResults)
-   
-   # Assign avg propensity scores to m.out and match
-   avg_prop <- rowMeans(propensityScores)
-   m.out$distance <- avg_prop
-   dataMatched <- match.data(m.out)
-   # Fit a model and store estimate treatment effect
-   lm1 <- lm(y ~ trt + X1 + X2 + X3 + X4 + X5, data = dataMatched)
-   resultsData[j, 'A_MI20'] <- summary(lm1)$coefficients[2,1]
-   
-   # Multiple Imputation - 50 datasets
-   m = 50
-   withinResults <- c()
-   propensityScores <- data.frame(matrix(ncol=0, nrow = n))
-   mids <- mice(dat[,3:7], m = m)
-   
-   for(k in 1:m) {
-      # Impute
-      dataImputed <- complete(mids, k)
-      # Append y and trt
-      dataImputed$trt = dat$trt
-      dataImputed$y = dat$y
-      # Do matching
-      m.out <- matchit(trt ~ X1 + X2 + X3 + X4 + X5 , data = dataImputed, method = 'nearest',
-                       ratio = 1)
-      dataMatched <- match.data(m.out)
-      # Append propensity scores of each obs in a dataset
-      propensityScores <- cbind(propensityScores, data.frame(m.out$distance))
-      # Fit a model and store estimate treatment effect
-      lm0 <- lm(y ~ trt + X1 + X2 + X3 + X4 + X5, data = dataMatched)
-      withinResults[k] <- summary(lm0)$coef[2,1]
-   }
-   resultsData[j, 'W_MI50'] <- mean(withinResults)
-   
-   # Assign avg propensity scores to m.out and match
-   avg_prop <- rowMeans(propensityScores)
-   m.out$distance <- avg_prop
-   dataMatched <- match.data(m.out)
-   # Fit a model and store estimate treatment effect
-   lm1 <- lm(y ~ trt + X1 + X2 + X3 + X4 + X5, data = dataMatched)
-   resultsData[j, 'A_MI50'] <- summary(lm1)$coefficients[2,1]
+   CCA_treatment_estimation(j, 'CCA')
+   #MI 5, 20, 50
+   MI_treatment_estimation(5, j, 'W_MI5', 'A_MI5')
+   MI_treatment_estimation(20, j, 'W_MI20', 'A_MI20')
+   MI_treatment_estimation(50, j, 'W_MI50', 'A_MI50')
 }
 
 results <- data.frame(colMeans(resultsData))
